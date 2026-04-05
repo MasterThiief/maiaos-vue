@@ -9,7 +9,12 @@
           <span>Aguardando mensagens...</span>
         </div>
 
-        <div v-for="msg in messages" :key="msg.id" class="msg-row">
+        <div
+          v-for="msg in messages"
+          :key="msg._key"
+          class="msg-row"
+          :class="{ mention: isMention(msg.message) }"
+        >
           <!-- Avatar -->
           <img
             v-if="msg.avatarUrl"
@@ -25,20 +30,48 @@
           <!-- Conteúdo -->
           <div class="msg-body">
             <div class="msg-meta">
-              <!-- Badges -->
-              <span v-if="msg.isMod" class="badge mod" title="Moderador">MOD</span>
-              <span v-if="msg.isSub" class="badge sub" title="Inscrito">SUB</span>
-              <!-- Nome colorido -->
+              <span v-if="msg.isMod" class="badge mod">MOD</span>
+              <span v-if="msg.isSub" class="badge sub">SUB</span>
               <span class="msg-user" :style="{ color: msg.color || '#c084fc' }">
                 {{ msg.username }}
               </span>
             </div>
-            <div class="msg-text">{{ msg.message }}</div>
+            <!-- Texto com emotes e @ destacados -->
+            <div class="msg-text">
+              <template v-for="(part, i) in parseMessage(msg.message, msg.emotes)" :key="i">
+                <img
+                  v-if="part.type === 'emote'"
+                  :src="part.url"
+                  :alt="part.text"
+                  class="chat-emote"
+                  loading="lazy"
+                />
+                <span
+                  v-else-if="part.type === 'mention'"
+                  class="msg-mention"
+                  @click="insertMention(part.text)"
+                >{{ part.text }}</span>
+                <span v-else>{{ part.text }}</span>
+              </template>
+            </div>
           </div>
         </div>
       </div>
 
-      <!-- Barra de envio — só para logados -->
+      <!-- Autocomplete de @ -->
+      <div v-if="mentionSuggestions.length" class="mention-suggestions">
+        <div
+          v-for="(s, i) in mentionSuggestions"
+          :key="s"
+          class="mention-suggestion"
+          :class="{ active: i === mentionIndex }"
+          @mousedown.prevent="applyMention(s)"
+        >
+          @{{ s }}
+        </div>
+      </div>
+
+      <!-- Barra de envio -->
       <div v-if="store.user" class="chat-input-bar">
         <img
           v-if="store.user.profileImage"
@@ -48,11 +81,13 @@
         />
         <input
           v-model="draft"
+          ref="inputEl"
           class="chat-input"
           :placeholder="`Mensagem como ${store.user.displayName}…`"
           maxlength="500"
           :disabled="sending"
-          @keydown.enter.prevent="sendMessage"
+          @keydown="onKeydown"
+          @input="onInput"
         />
         <button
           class="send-btn"
@@ -73,35 +108,177 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
-import { io }            from 'socket.io-client'
-import OsWindow          from './OsWindow.vue'
+import { io }              from 'socket.io-client'
+import OsWindow            from './OsWindow.vue'
 import { useDesktopStore } from '@/stores/desktop'
 import { SOCKET_URL, TWITCH_CHANNEL, TWITCH_CLIENT_ID } from '@/config'
 
 const store      = useDesktopStore()
 const messagesEl = ref(null)
+const inputEl    = ref(null)
 const messages   = ref([])
 const draft      = ref('')
 const sending    = ref(false)
 const broadcasterID = ref('')
+const seenUsers  = ref(new Set())
 
 const MAX_MESSAGES = 150
 let socket = null
 
-// ── Socket ──────────────────────────────────────────────────────────────────
+// ── Parser — emotes + menções ────────────────────────────────────────────────
+function parseMessage(text, emotes) {
+  if (!text) return [{ type: 'text', text: '' }]
+
+  // Monta mapa de posição → emote
+  // emotes = { '425618': [[0, 2], [10, 12]] }
+  const emoteMap = {} // posição inicial → { endPos, emoteId }
+  if (emotes && typeof emotes === 'object') {
+    for (const [emoteId, positions] of Object.entries(emotes)) {
+      for (const pos of positions) {
+        // pos pode ser [start, end] ou "start-end"
+        let start, end
+        if (Array.isArray(pos)) {
+          ;[start, end] = pos
+        } else if (typeof pos === 'string') {
+          ;[start, end] = pos.split('-').map(Number)
+        }
+        if (start !== undefined) emoteMap[start] = { end, emoteId }
+      }
+    }
+  }
+
+  const parts = []
+  let i = 0
+  while (i < text.length) {
+    if (emoteMap[i]) {
+      const { end, emoteId } = emoteMap[i]
+      const emoteName = text.slice(i, end + 1)
+      parts.push({
+        type: 'emote',
+        text: emoteName,
+        url:  `https://static-cdn.jtvnw.net/emoticons/v2/${emoteId}/default/dark/2.0`,
+      })
+      i = end + 1
+    } else {
+      // Acumula texto até o próximo emote ou fim
+      let j = i + 1
+      while (j < text.length && !emoteMap[j]) j++
+      const chunk = text.slice(i, j)
+      // Dentro do chunk, detecta @menções
+      const mentionRegex = /(@\w+)/g
+      let last = 0
+      let match
+      while ((match = mentionRegex.exec(chunk)) !== null) {
+        if (match.index > last) {
+          parts.push({ type: 'text', text: chunk.slice(last, match.index) })
+        }
+        parts.push({ type: 'mention', text: match[1] })
+        last = match.index + match[1].length
+      }
+      if (last < chunk.length) {
+        parts.push({ type: 'text', text: chunk.slice(last) })
+      }
+      i = j
+    }
+  }
+
+  return parts.length ? parts : [{ type: 'text', text }]
+}
+
+// ── Detecta menção ao usuário logado ────────────────────────────────────────
+function isMention(text) {
+  if (!store.user?.login || !text) return false
+  return text.toLowerCase().includes(`@${store.user.login.toLowerCase()}`)
+}
+
+// ── Autocomplete ─────────────────────────────────────────────────────────────
+const mentionSuggestions = ref([])
+const mentionIndex       = ref(0)
+
+function onInput() {
+  const val    = draft.value
+  const cursor = inputEl.value?.selectionStart ?? val.length
+  const before = val.slice(0, cursor)
+  const match  = before.match(/@(\w*)$/)
+  if (match) {
+    const query = match[1].toLowerCase()
+    mentionSuggestions.value = [...seenUsers.value]
+      .filter(u => u.toLowerCase().startsWith(query))
+      .slice(0, 5)
+    mentionIndex.value = 0
+  } else {
+    mentionSuggestions.value = []
+  }
+}
+
+function applyMention(username) {
+  const val    = draft.value
+  const cursor = inputEl.value?.selectionStart ?? val.length
+  const before = val.slice(0, cursor)
+  const after  = val.slice(cursor)
+  draft.value  = before.replace(/@\w*$/, `@${username} `) + after
+  mentionSuggestions.value = []
+  nextTick(() => inputEl.value?.focus())
+}
+
+function insertMention(text) {
+  const name = text.replace('@', '')
+  draft.value += draft.value.length && !draft.value.endsWith(' ')
+    ? ` @${name} `
+    : `@${name} `
+  nextTick(() => inputEl.value?.focus())
+}
+
+function onKeydown(e) {
+  if (mentionSuggestions.value.length) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      mentionIndex.value = (mentionIndex.value + 1) % mentionSuggestions.value.length
+      return
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      mentionIndex.value = (mentionIndex.value - 1 + mentionSuggestions.value.length) % mentionSuggestions.value.length
+      return
+    }
+    if (e.key === 'Tab' || (e.key === 'Enter' && mentionSuggestions.value.length)) {
+      e.preventDefault()
+      applyMention(mentionSuggestions.value[mentionIndex.value])
+      return
+    }
+    if (e.key === 'Escape') {
+      mentionSuggestions.value = []
+      return
+    }
+  }
+  if (e.key === 'Enter') {
+    e.preventDefault()
+    sendMessage()
+  }
+}
+
+// ── Socket ───────────────────────────────────────────────────────────────────
 function connect() {
   socket = io(SOCKET_URL, { transports: ['websocket'] })
 
   socket.on('chat-message', (data) => {
-    messages.value.push({ ...data, _key: data.id || (Date.now() + Math.random()) })
+    // Fallback: se avatarUrl não veio mas é o usuário logado, usa foto da store
+    let avatarUrl = data.avatarUrl
+    if (!avatarUrl && store.user?.login?.toLowerCase() === data.username?.toLowerCase()) {
+      avatarUrl = store.user.profileImage
+    }
+
+    messages.value.push({ ...data, avatarUrl, _key: data.id || (Date.now() + Math.random()) })
+
     if (messages.value.length > MAX_MESSAGES) {
       messages.value.splice(0, messages.value.length - MAX_MESSAGES)
     }
+
+    if (data.username) seenUsers.value.add(data.username)
     autoScroll()
   })
 }
 
-// ── Auto-scroll inteligente: só rola se o usuário já estava no fundo ─────────
 async function autoScroll() {
   await nextTick()
   const el = messagesEl.value
@@ -110,7 +287,7 @@ async function autoScroll() {
   if (nearBottom) el.scrollTop = el.scrollHeight
 }
 
-// ── Broadcaster ID (necessário para envio via API) ───────────────────────────
+// ── Broadcaster ID ───────────────────────────────────────────────────────────
 async function fetchBroadcasterId() {
   if (broadcasterID.value || !store.user?.token) return
   try {
@@ -123,21 +300,19 @@ async function fetchBroadcasterId() {
   } catch { /* silencioso */ }
 }
 
-// ── Envio de mensagem via Twitch Helix ───────────────────────────────────────
+// ── Envio ────────────────────────────────────────────────────────────────────
 async function sendMessage() {
   const text = draft.value.trim()
   if (!text || sending.value || !store.user?.token) return
-
   sending.value = true
   try {
     if (!broadcasterID.value) await fetchBroadcasterId()
-
     const res = await fetch('https://api.twitch.tv/helix/chat/messages', {
       method: 'POST',
       headers: {
-        'Authorization':  `Bearer ${store.user.token}`,
-        'Client-Id':      TWITCH_CLIENT_ID,
-        'Content-Type':   'application/json',
+        'Authorization': `Bearer ${store.user.token}`,
+        'Client-Id':     TWITCH_CLIENT_ID,
+        'Content-Type':  'application/json',
       },
       body: JSON.stringify({
         broadcaster_id: broadcasterID.value,
@@ -145,13 +320,11 @@ async function sendMessage() {
         message:        text,
       }),
     })
-
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
       store.showToast('❌', err.message || 'Erro ao enviar mensagem')
       return
     }
-
     draft.value = ''
   } catch {
     store.showToast('❌', 'Não foi possível enviar a mensagem')
@@ -165,19 +338,16 @@ onMounted(() => {
   connect()
   if (store.user?.token) fetchBroadcasterId()
 })
-
 onUnmounted(() => {
   socket?.disconnect()
   socket = null
 })
-
 watch(() => store.user, (u) => {
   if (u?.token) fetchBroadcasterId()
 })
 </script>
 
 <style>
-/* Não-scoped: precisa estilizar win-body para o chat preencher a janela */
 #win-chat .win-body {
   padding: 0 !important;
   overflow: hidden;
@@ -195,9 +365,9 @@ watch(() => store.user, (u) => {
   height: 100%;
   min-height: 0;
   background: #0c0f14;
+  position: relative;
 }
 
-/* ── Mensagens ── */
 .messages {
   flex: 1;
   overflow-y: auto;
@@ -224,7 +394,6 @@ watch(() => store.user, (u) => {
 }
 .chat-empty span:first-child { font-size: 28px; }
 
-/* ── Linha de mensagem ── */
 .msg-row {
   display: flex;
   align-items: flex-start;
@@ -234,6 +403,12 @@ watch(() => store.user, (u) => {
   transition: background 0.1s;
 }
 .msg-row:hover { background: rgba(255,255,255,0.03); }
+.msg-row.mention {
+  background: rgba(145,70,255,0.12);
+  border-left: 2px solid #9146ff;
+  padding-left: 4px;
+}
+.msg-row.mention:hover { background: rgba(145,70,255,0.18); }
 
 .msg-avatar {
   width: 28px;
@@ -244,6 +419,9 @@ watch(() => store.user, (u) => {
   margin-top: 1px;
 }
 .msg-avatar-fallback {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
   background: rgba(145,70,255,0.25);
   color: #c084fc;
   font-size: 12px;
@@ -251,18 +429,14 @@ watch(() => store.user, (u) => {
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
+  margin-top: 1px;
 }
 
 .msg-body  { flex: 1; min-width: 0; }
 .msg-meta  { display: flex; align-items: center; gap: 4px; margin-bottom: 2px; flex-wrap: wrap; }
 
-.badge {
-  font-size: 8.5px;
-  font-weight: 800;
-  padding: 1px 4px;
-  border-radius: 3px;
-  flex-shrink: 0;
-}
+.badge { font-size: 8.5px; font-weight: 800; padding: 1px 4px; border-radius: 3px; flex-shrink: 0; }
 .badge.mod { background: #4ade80; color: #000; }
 .badge.sub { background: #ffb86c; color: #000; }
 
@@ -279,6 +453,54 @@ watch(() => store.user, (u) => {
   color: #d4d4d4;
   line-height: 1.45;
   word-break: break-word;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+}
+
+.chat-emote {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  vertical-align: middle;
+  display: inline-block;
+}
+
+.msg-mention {
+  color: #9146ff;
+  font-weight: 700;
+  cursor: pointer;
+  border-radius: 3px;
+  padding: 0 2px;
+  transition: background 0.1s;
+}
+.msg-mention:hover { background: rgba(145,70,255,0.2); }
+
+/* ── Autocomplete ── */
+.mention-suggestions {
+  position: absolute;
+  bottom: 48px;
+  left: 8px;
+  right: 8px;
+  background: #1a1d26;
+  border: 1px solid rgba(145,70,255,0.3);
+  border-radius: 6px;
+  overflow: hidden;
+  z-index: 10;
+  box-shadow: 0 -4px 12px rgba(0,0,0,0.4);
+}
+.mention-suggestion {
+  padding: 7px 12px;
+  font-size: 12px;
+  color: #ccc;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.mention-suggestion:hover,
+.mention-suggestion.active {
+  background: rgba(145,70,255,0.2);
+  color: #fff;
 }
 
 /* ── Input ── */
@@ -291,7 +513,6 @@ watch(() => store.user, (u) => {
   background: #111419;
   flex-shrink: 0;
 }
-
 .input-avatar {
   width: 24px;
   height: 24px;
@@ -299,7 +520,6 @@ watch(() => store.user, (u) => {
   object-fit: cover;
   flex-shrink: 0;
 }
-
 .chat-input {
   flex: 1;
   background: rgba(255,255,255,0.05);
@@ -312,7 +532,7 @@ watch(() => store.user, (u) => {
   min-width: 0;
   transition: border-color 0.15s;
 }
-.chat-input:focus   { border-color: rgba(145,70,255,0.5); }
+.chat-input:focus    { border-color: rgba(145,70,255,0.5); }
 .chat-input:disabled { opacity: 0.4; cursor: default; }
 
 .send-btn {
