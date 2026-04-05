@@ -19,7 +19,7 @@
         scrolling="no"
         frameborder="0"
         style="width:100%;aspect-ratio:16/9;display:block;background:#000"
-        allow="autoplay; fullscreen"
+        allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
       />
       <div v-else class="live-placeholder">
         <div style="font-size:40px;margin-bottom:12px">📺</div>
