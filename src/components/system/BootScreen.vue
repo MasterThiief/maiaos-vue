@@ -1,39 +1,8 @@
 <template>
   <div class="boot-screen" :class="{ 'fade-out': fading }">
     <div class="boot-logo">
-      <div class="boot-icon">
-        <svg viewBox="0 0 72 72" xmlns="http://www.w3.org/2000/svg" fill="none">
-          <rect x="2"  y="2"  width="30" height="30" rx="5" fill="#0078D7"/>
-          <line x1="12" y1="12" x2="22" y2="12" stroke="#fff" stroke-width="1.5" opacity="0.8"/>
-          <line x1="12" y1="17" x2="22" y2="17" stroke="#fff" stroke-width="1.5" opacity="0.8"/>
-          <line x1="12" y1="22" x2="18" y2="22" stroke="#fff" stroke-width="1.5" opacity="0.8"/>
-          <circle cx="12" cy="12" r="2" fill="#fff"/>
-          <circle cx="22" cy="22" r="2" fill="#fff"/>
-          <rect x="40" y="2"  width="30" height="30" rx="5" fill="#0078D7"/>
-          <circle cx="50" cy="12" r="3" stroke="#fff" stroke-width="1.5"/>
-          <line x1="50" y1="16" x2="50" y2="26" stroke="#fff" stroke-width="1.5" opacity="0.8"/>
-          <line x1="50" y1="22" x2="60" y2="22" stroke="#fff" stroke-width="1.5" opacity="0.8"/>
-          <circle cx="60" cy="22" r="2" fill="#fff"/>
-          <rect x="2"  y="40" width="30" height="30" rx="5" fill="#0078D7"/>
-          <line x1="12" y1="50" x2="22" y2="50" stroke="#fff" stroke-width="1.5" opacity="0.8"/>
-          <line x1="22" y1="50" x2="22" y2="62" stroke="#fff" stroke-width="1.5" opacity="0.8"/>
-          <circle cx="12" cy="62" r="2" fill="#fff"/>
-          <rect x="40" y="40" width="30" height="30" rx="5" fill="#0078D7"/>
-          <line x1="50" y1="50" x2="60" y2="50" stroke="#fff" stroke-width="1.5" opacity="0.8"/>
-          <line x1="50" y1="50" x2="50" y2="62" stroke="#fff" stroke-width="1.5" opacity="0.8"/>
-          <circle cx="60" cy="62" r="2" fill="#fff"/>
-          <circle cx="50" cy="56" r="2" fill="#fff"/>
-        </svg>
-      </div>
-      <div class="boot-text">
-        <span class="boot-brand">MaxterLabs</span>
-        <div style="display:flex;align-items:baseline;gap:0">
-          <span class="boot-name">Maia<span>OS</span></span>
-          <sup style="color:#888;font-size:12px;margin-left:2px">™</sup>
-        </div>
-        <span class="boot-edition">Professional</span>
-      </div>
-    </div>
+  <img src="@/assets/logo-maiaos.png" alt="MaiaOS" class="boot-logo-img" />
+</div>
 
     <div class="boot-loader">
       <div class="boot-loader-inner">
@@ -41,6 +10,7 @@
         <div class="boot-dot"></div>
         <div class="boot-dot"></div>
       </div>
+      <div class="boot-status">{{ statusMsg }}</div>
     </div>
 
     <div class="boot-copy">Copyright © MaxterLabs — MaiaOS Professional</div>
@@ -50,17 +20,124 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useDesktopStore } from '@/stores/desktop'
+import { API_URL }         from '@/config'
 
-const store  = useDesktopStore()
-const fading = ref(false)
+const store     = useDesktopStore()
+const fading    = ref(false)
+const statusMsg = ref('Iniciando sistema...')
 
-onMounted(() => {
+const STATUS_MSGS = [
+  'Iniciando sistema...',
+  'Conectando aos servidores...',
+  'Acordando os hamsters...',
+  'Verificando permissões...',
+  'Quase lá...',
+]
+
+async function wakeUpServer() {
+  const maxTries = 15
+  for (let i = 0; i < maxTries; i++) {
+    statusMsg.value = STATUS_MSGS[Math.min(i, STATUS_MSGS.length - 1)]
+    try {
+      const res = await fetch(`${API_URL}/health`, { signal: AbortSignal.timeout(4000) })
+      if (res.ok) return true
+    } catch { /* tenta de novo */ }
+    await new Promise(r => setTimeout(r, 2000))
+  }
+  return false
+}
+
+onMounted(async () => {
+  const [serverOk] = await Promise.all([
+    wakeUpServer(),
+    new Promise(r => setTimeout(r, 2000)),
+  ])
+
+  if (!serverOk) {
+    statusMsg.value = 'Servidor indisponível. Entrando offline...'
+    await new Promise(r => setTimeout(r, 1500))
+  } else {
+    statusMsg.value = 'Sistema pronto.'
+    await new Promise(r => setTimeout(r, 600))
+  }
+
+  fading.value = true
   setTimeout(() => {
-    fading.value = true
-    setTimeout(() => {
-      store.boot()
-      setTimeout(() => store.showToast('🤖', 'Bem-vindo ao MaiaOS Professional!'), 300)
-    }, 900)
-  }, 3200)
+    store.$onBootReady?.()
+  }, 900)
 })
 </script>
+
+<style scoped>
+.boot-screen {
+  position: fixed;
+  inset: 0;
+  background: #0a0d14;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 48px;
+  z-index: 9999;
+  transition: opacity 0.9s ease;
+}
+.boot-screen.fade-out { opacity: 0; pointer-events: none; }
+
+.boot-logo {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.boot-logo-img {
+  width: 280px;
+  height: auto;
+  object-fit: contain;
+}
+
+.boot-name span { color: #9146ff; }
+
+.boot-loader {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.boot-loader-inner {
+  display: flex;
+  gap: 8px;
+}
+
+.boot-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #9146ff;
+  animation: bounce 1.2s infinite ease-in-out;
+}
+.boot-dot:nth-child(1) { animation-delay: 0s; }
+.boot-dot:nth-child(2) { animation-delay: 0.2s; }
+.boot-dot:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes bounce {
+  0%, 80%, 100% { opacity: 0.2; transform: scale(0.8); }
+  40%           { opacity: 1;   transform: scale(1.2); }
+}
+
+.boot-status {
+  font-size: 11px;
+  color: #555;
+  letter-spacing: 0.5px;
+  min-height: 16px;
+  transition: opacity 0.3s;
+}
+
+.boot-copy {
+  position: absolute;
+  bottom: 20px;
+  font-size: 10px;
+  color: #2a2a2a;
+  letter-spacing: 0.5px;
+}
+</style>

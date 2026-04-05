@@ -1,7 +1,5 @@
-// useTwitchAuth.js
-import { TWITCH_CLIENT_ID, TWITCH_REDIRECT_URI } from '@/config'
-import { API_URL }          from '@/config'           // [NOVO]
-import { useDesktopStore }  from '@/stores/desktop'
+import { TWITCH_CLIENT_ID, TWITCH_REDIRECT_URI, API_URL } from '@/config'
+import { useDesktopStore } from '@/stores/desktop'
 
 export function useTwitchAuth() {
   const store = useDesktopStore()
@@ -11,7 +9,7 @@ export function useTwitchAuth() {
       client_id:     TWITCH_CLIENT_ID,
       redirect_uri:  TWITCH_REDIRECT_URI,
       response_type: 'token',
-      scope: 'user:read:email user:write:chat',
+      scope:         'user:read:email user:write:chat',
     })
     window.location.href = `https://id.twitch.tv/oauth2/authorize?${params}`
   }
@@ -49,7 +47,7 @@ export function useTwitchAuth() {
       const u    = data.data?.[0]
       if (!u) throw new Error('Usuário não encontrado')
 
-      // [NOVO] 2. Buscar isSubscriber (e outros campos) no banco próprio
+      // 2. Buscar isSubscriber e outros campos no banco próprio
       let isSubscriber = false
       let isVip        = false
       let isMod        = false
@@ -61,22 +59,25 @@ export function useTwitchAuth() {
           isVip         = profile.isVip        ?? false
           isMod         = profile.isMod        ?? false
         }
-        // Se o usuário nunca apareceu no chat ainda, a rota retorna 404
-        // — mantém false sem quebrar o login
       } catch {
         // Falha silenciosa: login segue sem status de sub
       }
 
-      store.setUser({
+      const user = {
         id:           u.id,
         login:        u.login,
         displayName:  u.display_name,
         profileImage: u.profile_image_url,
-        isSubscriber, // [NOVO]
-        isVip,        // [NOVO]
-        isMod,        // [NOVO]
+        isSubscriber,
+        isVip,
+        isMod,
         token,
-      })
+      }
+
+      store.setUser(user)
+
+      // [NOVO] Persiste sessão no localStorage
+      localStorage.setItem('maiaos_user', JSON.stringify(user))
 
       store.showToast('✅', `Bem-vindo(a), ${u.display_name}!`)
       return true
@@ -89,7 +90,9 @@ export function useTwitchAuth() {
   }
 
   function logout() {
+    localStorage.removeItem('maiaos_user') // [NOVO]
     store.setUser(null)
+    store.shutdown()
     store.showToast('👋', 'Sessão encerrada. Até a próxima!')
   }
 

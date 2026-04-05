@@ -30,6 +30,15 @@ const windows = ref({
 
   function boot() { booted.value = true }
 
+  function shutdown() {
+  booted.value = false
+  // Fecha todas as janelas
+  Object.keys(windows.value).forEach(id => {
+    windows.value[id].open = false
+    windows.value[id].minimized = false
+  })
+}
+
   function openWindow(id) {
     if (!windows.value[id]) return
     windows.value[id].open      = true
@@ -83,6 +92,6 @@ const windows = ref({
     boot, setUser,
     openWindow, closeWindow, minimizeWindow, toggleMaximize, focusWindow, restoreWindow,
     toggleStartMenu, closeStartMenu, showContextMenu, hideContextMenu,
-    selectIcon, clearIconSelection, showToast,
+    selectIcon, clearIconSelection, showToast,shutdown,
   }
 })
