@@ -11,25 +11,18 @@ import StartMenu         from '@/components/system/StartMenu.vue'
 import ContextMenu       from '@/components/system/ContextMenu.vue'
 import MobileBlock       from '@/components/system/MobileBlock.vue'
 import ToastNotification from '@/components/ui/ToastNotification.vue'
-import { usePush } from '@/composables/usePush'
-import PushPrompt from '@/components/ui/PushPrompt.vue'
+import PushPrompt        from '@/components/ui/PushPrompt.vue'
+import { usePush }       from '@/composables/usePush'
 
-const { isSupported, isSubscribed, subscribe } = usePush()
+const { isSupported, isSubscribed } = usePush()
 const store = useDesktopStore()
 const { handleCallback } = useTwitchAuth()
 
 const isMobile        = ref(window.innerWidth < 768)
 const mobileDismissed = ref(false)
-
 const isOAuthCallback = window.location.hash.includes('access_token')
-
-// Checa se já tem sessão salva
-const savedUser = localStorage.getItem('maiaos_user')
-
-// Se voltou do OAuth ou tem sessão salva, pula boot e login
-const phase = ref(
-  isOAuthCallback || savedUser ? 'processing' : 'boot'
-)
+const savedUser       = localStorage.getItem('maiaos_user')
+const phase           = ref(isOAuthCallback || savedUser ? 'processing' : 'boot')
 
 function onResize() { isMobile.value = window.innerWidth < 768 }
 
@@ -38,28 +31,21 @@ async function onLoggedIn() {
   store.boot()
   setTimeout(() => store.showToast('🤖', 'Bem-vindo ao MaiaOS Professional!'), 300)
 
-  // Pergunta sobre notificações após 3s — só se ainda não respondeu
   if (isSupported()) {
     const alreadySubscribed = await isSubscribed()
     if (!alreadySubscribed && Notification.permission === 'default') {
-      setTimeout(() => {
-        store.showPushPrompt()
-      }, 3000)
+      setTimeout(() => store.showPushPrompt(), 3000)
     }
   }
 }
 
 watch(() => store.booted, (booted) => {
-  if (!booted && phase.value === 'desktop') {
-    phase.value = 'login'
-  }
+  if (!booted && phase.value === 'desktop') phase.value = 'login'
 })
-
 
 onMounted(async () => {
   window.addEventListener('resize', onResize)
 
-  // Callback do OAuth
   if (isOAuthCallback) {
     const loggedIn = await handleCallback()
     if (loggedIn) { onLoggedIn(); return }
@@ -67,17 +53,14 @@ onMounted(async () => {
     return
   }
 
-  // Sessão salva — restaura sem precisar logar de novo
   if (savedUser) {
     try {
-      const user = JSON.parse(savedUser)
-      store.setUser(user)
+      store.setUser(JSON.parse(savedUser))
       onLoggedIn()
     } catch {
       localStorage.removeItem('maiaos_user')
       phase.value = 'boot'
     }
-    return
   }
 })
 
@@ -107,6 +90,7 @@ store.$onBootReady = () => { phase.value = 'login' }
       <StartMenu />
       <ContextMenu />
     </template>
+
     <PushPrompt />
     <ToastNotification />
   </template>

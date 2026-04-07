@@ -4,9 +4,9 @@ import { API_URL } from '@/config'
 const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY
 
 function urlBase64ToUint8Array(base64String) {
-  const padding  = '='.repeat((4 - base64String.length % 4) % 4)
-  const base64   = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/')
-  const rawData  = window.atob(base64)
+  const padding   = '='.repeat((4 - base64String.length % 4) % 4)
+  const base64    = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/')
+  const rawData   = window.atob(base64)
   const outputArray = new Uint8Array(rawData.length)
   for (let i = 0; i < rawData.length; ++i) {
     outputArray[i] = rawData.charCodeAt(i)
@@ -16,43 +16,48 @@ function urlBase64ToUint8Array(base64String) {
 
 export function usePush() {
 
-  // Verifica se o browser suporta push
   function isSupported() {
     return 'serviceWorker' in navigator && 'PushManager' in window
   }
 
-  // Verifica se já está inscrito
   async function isSubscribed() {
     if (!isSupported()) return false
     try {
-      const reg = await navigator.serviceWorker.ready
+      // Registra o SW primeiro se ainda não estiver registrado
+      await navigator.serviceWorker.register('/sw.js')
+
+      // Timeout de segurança: se demorar mais de 3s, assume não inscrito
+      const reg = await Promise.race([
+        navigator.serviceWorker.ready,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000))
+      ])
+
       const sub = await reg.pushManager.getSubscription()
       return !!sub
-    } catch {
+    } catch (e) {
+      console.warn('[Push] isSubscribed falhou:', e.message)
       return false
     }
   }
 
-  // Registra o service worker e pede permissão
   async function subscribe(twitchId = null) {
     if (!isSupported()) return { ok: false, reason: 'not_supported' }
 
     try {
-      // Registra o service worker
       const reg = await navigator.serviceWorker.register('/sw.js')
-      await navigator.serviceWorker.ready
+      await Promise.race([
+        navigator.serviceWorker.ready,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
+      ])
 
-      // Pede permissão
       const permission = await Notification.requestPermission()
       if (permission !== 'granted') return { ok: false, reason: 'denied' }
 
-      // Cria a subscription
       const subscription = await reg.pushManager.subscribe({
         userVisibleOnly:      true,
         applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
       })
 
-      // Envia para a API
       await fetch(`${API_URL}/api/push/subscribe`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -66,7 +71,6 @@ export function usePush() {
     }
   }
 
-  // Cancela a subscription
   async function unsubscribe() {
     if (!isSupported()) return
     try {
