@@ -1,8 +1,13 @@
 <template>
-  <OsWindow id="chat" icon="💬" title="Chat da Live" :minW="260" :minH="300">
-    <div class="chat-root">
+  <OsWindow id="chat" icon="💬" title="Chat da Live">
+    <template #toolbar>
+      <button class="win-toolbar-btn" :class="{ active: aba === 'maia' }"   @click="aba = 'maia'">💬 MaiaChat</button>
+      <button class="win-toolbar-btn" :class="{ active: aba === 'twitch' }" @click="aba = 'twitch'">🟣 TwitchChat</button>
+    </template>
 
-      <!-- Lista de mensagens -->
+    <!-- ── MaiaChat ── -->
+    <div v-if="aba === 'maia'" class="chat-root">
+
       <div class="messages" ref="messagesEl">
         <div v-if="messages.length === 0" class="chat-empty">
           <span>💬</span>
@@ -15,7 +20,6 @@
           class="msg-row"
           :class="{ mention: isMention(msg.message) }"
         >
-          <!-- Avatar -->
           <img
             v-if="msg.avatarUrl"
             :src="msg.avatarUrl"
@@ -27,7 +31,6 @@
             {{ msg.username?.[0]?.toUpperCase() }}
           </div>
 
-          <!-- Conteúdo -->
           <div class="msg-body">
             <div class="msg-meta">
               <span v-if="msg.isMod" class="badge mod">MOD</span>
@@ -36,7 +39,6 @@
                 {{ msg.username }}
               </span>
             </div>
-            <!-- Texto com emotes e @ destacados -->
             <div class="msg-text">
               <template v-for="(part, i) in parseMessage(msg.message, msg.emotes)" :key="i">
                 <img
@@ -58,7 +60,7 @@
         </div>
       </div>
 
-      <!-- Autocomplete de @ -->
+      <!-- Autocomplete -->
       <div v-if="mentionSuggestions.length" class="mention-suggestions">
         <div
           v-for="(s, i) in mentionSuggestions"
@@ -71,7 +73,7 @@
         </div>
       </div>
 
-      <!-- Barra de envio -->
+      <!-- Input -->
       <div v-if="store.user" class="chat-input-bar">
         <img
           v-if="store.user.profileImage"
@@ -97,23 +99,44 @@
           {{ sending ? '…' : '▶' }}
         </button>
       </div>
-
       <div v-else class="chat-login-hint">
         Faça login com a Twitch para participar
       </div>
 
     </div>
+
+    <!-- ── TwitchChat ── -->
+    <div v-else class="twitch-chat-wrap">
+      <!-- Aviso para broadcaster -->
+      <div v-if="isBroadcaster" class="broadcaster-hint">
+        ⚠️ O chat embed tem limitações para o broadcaster. Use o chat nativo da Twitch.
+        <a :href="`https://www.twitch.tv/popout/${TWITCH_CHANNEL}/chat?darkpopout`"
+           target="_blank" rel="noopener" class="hint-link">
+          Abrir em nova aba ↗
+        </a>
+      </div>
+      <iframe
+        :src="twitchChatUrl"
+        class="twitch-frame"
+        frameborder="0"
+        scrolling="yes"
+        allowtransparency="true"
+        sandbox="allow-scripts allow-same-origin allow-popups"
+      />
+    </div>
+
   </OsWindow>
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { io }              from 'socket.io-client'
 import OsWindow            from './OsWindow.vue'
 import { useDesktopStore } from '@/stores/desktop'
 import { SOCKET_URL, TWITCH_CHANNEL, TWITCH_CLIENT_ID } from '@/config'
 
 const store      = useDesktopStore()
+const aba        = ref('maia')
 const messagesEl = ref(null)
 const inputEl    = ref(null)
 const messages   = ref([])
@@ -125,17 +148,23 @@ const seenUsers  = ref(new Set())
 const MAX_MESSAGES = 150
 let socket = null
 
+// ── TwitchChat ───────────────────────────────────────────────────────────────
+const parent       = window.location.hostname || 'localhost'
+const twitchChatUrl = computed(() =>
+  `https://www.twitch.tv/embed/${TWITCH_CHANNEL}/chat?parent=${parent}&darkpopout`
+)
+const isBroadcaster = computed(() =>
+  store.user?.login?.toLowerCase() === TWITCH_CHANNEL.toLowerCase()
+)
+
 // ── Parser — emotes + menções ────────────────────────────────────────────────
 function parseMessage(text, emotes) {
   if (!text) return [{ type: 'text', text: '' }]
 
-  // Monta mapa de posição → emote
-  // emotes = { '425618': [[0, 2], [10, 12]] }
-  const emoteMap = {} // posição inicial → { endPos, emoteId }
+  const emoteMap = {}
   if (emotes && typeof emotes === 'object') {
     for (const [emoteId, positions] of Object.entries(emotes)) {
       for (const pos of positions) {
-        // pos pode ser [start, end] ou "start-end"
         let start, end
         if (Array.isArray(pos)) {
           ;[start, end] = pos
@@ -160,11 +189,9 @@ function parseMessage(text, emotes) {
       })
       i = end + 1
     } else {
-      // Acumula texto até o próximo emote ou fim
       let j = i + 1
       while (j < text.length && !emoteMap[j]) j++
       const chunk = text.slice(i, j)
-      // Dentro do chunk, detecta @menções
       const mentionRegex = /(@\w+)/g
       let last = 0
       let match
@@ -185,7 +212,6 @@ function parseMessage(text, emotes) {
   return parts.length ? parts : [{ type: 'text', text }]
 }
 
-// ── Detecta menção ao usuário logado ────────────────────────────────────────
 function isMention(text) {
   if (!store.user?.login || !text) return false
   return text.toLowerCase().includes(`@${store.user.login.toLowerCase()}`)
@@ -260,20 +286,15 @@ function onKeydown(e) {
 // ── Socket ───────────────────────────────────────────────────────────────────
 function connect() {
   socket = io(SOCKET_URL, { transports: ['websocket'] })
-
   socket.on('chat-message', (data) => {
-    // Fallback: se avatarUrl não veio mas é o usuário logado, usa foto da store
     let avatarUrl = data.avatarUrl
     if (!avatarUrl && store.user?.login?.toLowerCase() === data.username?.toLowerCase()) {
       avatarUrl = store.user.profileImage
     }
-
     messages.value.push({ ...data, avatarUrl, _key: data.id || (Date.now() + Math.random()) })
-
     if (messages.value.length > MAX_MESSAGES) {
       messages.value.splice(0, messages.value.length - MAX_MESSAGES)
     }
-
     if (data.username) seenUsers.value.add(data.username)
     autoScroll()
   })
@@ -359,6 +380,7 @@ watch(() => store.user, (u) => {
 </style>
 
 <style scoped>
+/* ── MaiaChat ── */
 .chat-root {
   display: flex;
   flex-direction: column;
@@ -561,5 +583,48 @@ watch(() => store.user, (u) => {
   color: #444;
   border-top: 1px solid rgba(255,255,255,0.06);
   flex-shrink: 0;
+}
+
+/* ── TwitchChat ── */
+.twitch-chat-wrap {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.broadcaster-hint {
+  padding: 8px 12px;
+  font-size: 10.5px;
+  color: #888;
+  background: rgba(255,140,0,0.07);
+  border-bottom: 1px solid rgba(255,140,0,0.15);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.hint-link {
+  color: #9146ff;
+  text-decoration: none;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.hint-link:hover { text-decoration: underline; }
+
+.twitch-frame {
+  flex: 1;
+  width: 100%;
+  border: none;
+  display: block;
+  min-height: 0;
+}
+
+/* Toolbar ativa */
+.win-toolbar-btn.active {
+  background: rgba(145,70,255,0.2);
+  color: #c084fc;
+  border-color: #9146ff;
 }
 </style>
