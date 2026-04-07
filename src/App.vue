@@ -11,8 +11,10 @@ import StartMenu         from '@/components/system/StartMenu.vue'
 import ContextMenu       from '@/components/system/ContextMenu.vue'
 import MobileBlock       from '@/components/system/MobileBlock.vue'
 import ToastNotification from '@/components/ui/ToastNotification.vue'
+import { usePush } from '@/composables/usePush'
+import PushPrompt from '@/components/ui/PushPrompt.vue'
 
-
+const { isSupported, isSubscribed, subscribe } = usePush()
 const store = useDesktopStore()
 const { handleCallback } = useTwitchAuth()
 
@@ -31,10 +33,20 @@ const phase = ref(
 
 function onResize() { isMobile.value = window.innerWidth < 768 }
 
-function onLoggedIn() {
+async function onLoggedIn() {
   phase.value = 'desktop'
   store.boot()
   setTimeout(() => store.showToast('🤖', 'Bem-vindo ao MaiaOS Professional!'), 300)
+
+  // Pergunta sobre notificações após 3s — só se ainda não respondeu
+  if (isSupported()) {
+    const alreadySubscribed = await isSubscribed()
+    if (!alreadySubscribed && Notification.permission === 'default') {
+      setTimeout(() => {
+        store.showPushPrompt()
+      }, 3000)
+    }
+  }
 }
 
 watch(() => store.booted, (booted) => {
@@ -95,7 +107,7 @@ store.$onBootReady = () => { phase.value = 'login' }
       <StartMenu />
       <ContextMenu />
     </template>
-
+    <PushPrompt />
     <ToastNotification />
   </template>
 </template>

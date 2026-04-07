@@ -4,6 +4,7 @@ import { ref } from 'vue'
 export const useDesktopStore = defineStore('desktop', () => {
   const booted = ref(false)
   const user   = ref(null)
+  const pushPrompt = ref(false)
 
   function setUser(userData) { user.value = userData }
 
@@ -79,6 +80,8 @@ const windows = ref({
   function hideContextMenu()    { contextMenu.value.visible = false }
   function selectIcon(id)       { selectedIcon.value = id }
   function clearIconSelection() { selectedIcon.value = null }
+  function showPushPrompt() { pushPrompt.value = true }
+  function hidePushPrompt() { pushPrompt.value = false }
 
   function showToast(icon, message, title = 'MaiaOS') {
     if (toastTimer) clearTimeout(toastTimer)
@@ -92,6 +95,6 @@ const windows = ref({
     boot, setUser,
     openWindow, closeWindow, minimizeWindow, toggleMaximize, focusWindow, restoreWindow,
     toggleStartMenu, closeStartMenu, showContextMenu, hideContextMenu,
-    selectIcon, clearIconSelection, showToast,shutdown,
+    selectIcon, clearIconSelection, showToast,shutdown,pushPrompt, showPushPrompt, hidePushPrompt
   }
 })
