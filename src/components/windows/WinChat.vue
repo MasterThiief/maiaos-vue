@@ -15,24 +15,32 @@
         </div>
 
         <div
-          v-for="msg in messages"
+          v-for="(msg, idx) in messages"
           :key="msg._key"
           class="msg-row"
-          :class="{ mention: isMention(msg.message) }"
+          :class="{
+            mention:  isMention(msg.message),
+            own:      isOwn(msg.username),
+            grouped:  isGrouped(idx),
+            [ownPosition(idx)]: isOwn(msg.username),
+          }"
         >
-          <img
-            v-if="msg.avatarUrl"
-            :src="msg.avatarUrl"
-            class="msg-avatar"
-            :alt="msg.username"
-            loading="lazy"
-          />
-          <div v-else class="msg-avatar msg-avatar-fallback">
-            {{ msg.username?.[0]?.toUpperCase() }}
-          </div>
+          <template v-if="!isGrouped(idx)">
+            <img
+              v-if="msg.avatarUrl"
+              :src="msg.avatarUrl"
+              class="msg-avatar"
+              :alt="msg.username"
+              loading="lazy"
+            />
+            <div v-else class="msg-avatar msg-avatar-fallback">
+              {{ msg.username?.[0]?.toUpperCase() }}
+            </div>
+          </template>
+          <div v-else class="msg-avatar-spacer" />
 
           <div class="msg-body">
-            <div class="msg-meta">
+            <div v-if="!isGrouped(idx)" class="msg-meta">
               <span v-if="msg.isMod" class="badge mod">MOD</span>
               <span v-if="msg.isSub" class="badge sub">SUB</span>
               <span class="msg-user" :style="{ color: msg.color || '#c084fc' }">
@@ -107,7 +115,6 @@
 
     <!-- ── TwitchChat ── -->
     <div v-else class="twitch-chat-wrap">
-      <!-- Aviso para broadcaster -->
       <div v-if="isBroadcaster" class="broadcaster-hint">
         ⚠️ O chat embed tem limitações para o broadcaster. Use o chat nativo da Twitch.
         <a :href="`https://www.twitch.tv/popout/${TWITCH_CHANNEL}/chat?darkpopout`"
@@ -145,11 +152,12 @@ const sending    = ref(false)
 const broadcasterID = ref('')
 const seenUsers  = ref(new Set())
 
-const MAX_MESSAGES = 150
+const MAX_MESSAGES  = 150
+const GROUP_TIMEOUT = 2 * 60 * 1000
 let socket = null
 
 // ── TwitchChat ───────────────────────────────────────────────────────────────
-const parent       = window.location.hostname || 'localhost'
+const parent        = window.location.hostname || 'localhost'
 const twitchChatUrl = computed(() =>
   `https://www.twitch.tv/embed/${TWITCH_CHANNEL}/chat?parent=${parent}&darkpopout`
 )
@@ -157,58 +165,73 @@ const isBroadcaster = computed(() =>
   store.user?.login?.toLowerCase() === TWITCH_CHANNEL.toLowerCase()
 )
 
-// ── Parser — emotes + menções ────────────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────────────────
+function isOwn(username) {
+  return store.user?.login?.toLowerCase() === username?.toLowerCase()
+}
+
+function isGroupBreak(idx) {
+  if (idx === 0) return true
+  const curr = messages.value[idx]
+  const prev = messages.value[idx - 1]
+  return curr.username !== prev.username || (curr._ts - prev._ts) >= GROUP_TIMEOUT
+}
+
+function isGrouped(idx) {
+  if (idx === 0) return false
+  const curr = messages.value[idx]
+  const prev = messages.value[idx - 1]
+  if (curr.username !== prev.username) return false
+  return (curr._ts - prev._ts) < GROUP_TIMEOUT
+}
+
+function ownPosition(idx) {
+  const curr = messages.value[idx]
+  if (!isOwn(curr.username)) return ''
+  const prevOwn = idx > 0 && isOwn(messages.value[idx - 1].username) && !isGroupBreak(idx)
+  const nextOwn = idx < messages.value.length - 1 && isOwn(messages.value[idx + 1].username) && !isGroupBreak(idx + 1)
+  if (!prevOwn && !nextOwn) return 'own-only'
+  if (!prevOwn && nextOwn)  return 'own-first'
+  if (prevOwn && nextOwn)   return ''
+  return 'own-last'
+}
+
+// ── Parser ───────────────────────────────────────────────────────────────────
 function parseMessage(text, emotes) {
   if (!text) return [{ type: 'text', text: '' }]
-
   const emoteMap = {}
   if (emotes && typeof emotes === 'object') {
     for (const [emoteId, positions] of Object.entries(emotes)) {
       for (const pos of positions) {
         let start, end
-        if (Array.isArray(pos)) {
-          ;[start, end] = pos
-        } else if (typeof pos === 'string') {
-          ;[start, end] = pos.split('-').map(Number)
-        }
+        if (Array.isArray(pos)) { [start, end] = pos }
+        else if (typeof pos === 'string') { [start, end] = pos.split('-').map(Number) }
         if (start !== undefined) emoteMap[start] = { end, emoteId }
       }
     }
   }
-
   const parts = []
   let i = 0
   while (i < text.length) {
     if (emoteMap[i]) {
       const { end, emoteId } = emoteMap[i]
-      const emoteName = text.slice(i, end + 1)
-      parts.push({
-        type: 'emote',
-        text: emoteName,
-        url:  `https://static-cdn.jtvnw.net/emoticons/v2/${emoteId}/default/dark/2.0`,
-      })
+      parts.push({ type: 'emote', text: text.slice(i, end + 1), url: `https://static-cdn.jtvnw.net/emoticons/v2/${emoteId}/default/dark/2.0` })
       i = end + 1
     } else {
       let j = i + 1
       while (j < text.length && !emoteMap[j]) j++
       const chunk = text.slice(i, j)
       const mentionRegex = /(@\w+)/g
-      let last = 0
-      let match
+      let last = 0, match
       while ((match = mentionRegex.exec(chunk)) !== null) {
-        if (match.index > last) {
-          parts.push({ type: 'text', text: chunk.slice(last, match.index) })
-        }
+        if (match.index > last) parts.push({ type: 'text', text: chunk.slice(last, match.index) })
         parts.push({ type: 'mention', text: match[1] })
         last = match.index + match[1].length
       }
-      if (last < chunk.length) {
-        parts.push({ type: 'text', text: chunk.slice(last) })
-      }
+      if (last < chunk.length) parts.push({ type: 'text', text: chunk.slice(last) })
       i = j
     }
   }
-
   return parts.length ? parts : [{ type: 'text', text }]
 }
 
@@ -228,9 +251,7 @@ function onInput() {
   const match  = before.match(/@(\w*)$/)
   if (match) {
     const query = match[1].toLowerCase()
-    mentionSuggestions.value = [...seenUsers.value]
-      .filter(u => u.toLowerCase().startsWith(query))
-      .slice(0, 5)
+    mentionSuggestions.value = [...seenUsers.value].filter(u => u.toLowerCase().startsWith(query)).slice(0, 5)
     mentionIndex.value = 0
   } else {
     mentionSuggestions.value = []
@@ -249,40 +270,19 @@ function applyMention(username) {
 
 function insertMention(text) {
   const name = text.replace('@', '')
-  draft.value += draft.value.length && !draft.value.endsWith(' ')
-    ? ` @${name} `
-    : `@${name} `
+  draft.value += draft.value.length && !draft.value.endsWith(' ') ? ` @${name} ` : `@${name} `
   nextTick(() => inputEl.value?.focus())
 }
 
 function onKeydown(e) {
   if (mentionSuggestions.value.length) {
-    if (e.key === 'ArrowDown') {
-      e.preventDefault()
-      mentionIndex.value = (mentionIndex.value + 1) % mentionSuggestions.value.length
-      return
-    }
-    if (e.key === 'ArrowUp') {
-      e.preventDefault()
-      mentionIndex.value = (mentionIndex.value - 1 + mentionSuggestions.value.length) % mentionSuggestions.value.length
-      return
-    }
-    if (e.key === 'Tab' || (e.key === 'Enter' && mentionSuggestions.value.length)) {
-      e.preventDefault()
-      applyMention(mentionSuggestions.value[mentionIndex.value])
-      return
-    }
-    if (e.key === 'Escape') {
-      mentionSuggestions.value = []
-      return
-    }
+    if (e.key === 'ArrowDown')  { e.preventDefault(); mentionIndex.value = (mentionIndex.value + 1) % mentionSuggestions.value.length; return }
+    if (e.key === 'ArrowUp')    { e.preventDefault(); mentionIndex.value = (mentionIndex.value - 1 + mentionSuggestions.value.length) % mentionSuggestions.value.length; return }
+    if (e.key === 'Tab' || (e.key === 'Enter' && mentionSuggestions.value.length)) { e.preventDefault(); applyMention(mentionSuggestions.value[mentionIndex.value]); return }
+    if (e.key === 'Escape') { mentionSuggestions.value = []; return }
   }
-  if (e.key === 'Enter') {
-    e.preventDefault()
-    sendMessage()
-  }
+  if (e.key === 'Enter') { e.preventDefault(); sendMessage() }
 }
-
 // ── Socket ───────────────────────────────────────────────────────────────────
 function connect() {
   socket = io(SOCKET_URL, { transports: ['websocket'] })
@@ -291,7 +291,12 @@ function connect() {
     if (!avatarUrl && store.user?.login?.toLowerCase() === data.username?.toLowerCase()) {
       avatarUrl = store.user.profileImage
     }
-    messages.value.push({ ...data, avatarUrl, _key: data.id || (Date.now() + Math.random()) })
+    messages.value.push({
+      ...data,
+      avatarUrl,
+      _key: data.id || (Date.now() + Math.random()),
+      _ts:  Date.now(),
+    })
     if (messages.value.length > MAX_MESSAGES) {
       messages.value.splice(0, messages.value.length - MAX_MESSAGES)
     }
@@ -351,6 +356,7 @@ async function sendMessage() {
     store.showToast('❌', 'Não foi possível enviar a mensagem')
   } finally {
     sending.value = false
+    nextTick(() => inputEl.value?.focus())
   }
 }
 
@@ -380,7 +386,6 @@ watch(() => store.user, (u) => {
 </style>
 
 <style scoped>
-/* ── MaiaChat ── */
 .chat-root {
   display: flex;
   flex-direction: column;
@@ -396,7 +401,7 @@ watch(() => store.user, (u) => {
   padding: 8px 6px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 0px;
   min-height: 0;
   scroll-behavior: smooth;
 }
@@ -420,17 +425,41 @@ watch(() => store.user, (u) => {
   display: flex;
   align-items: flex-start;
   gap: 7px;
-  padding: 4px 6px;
+  padding: 3px 6px;
   border-radius: 6px;
   transition: background 0.1s;
 }
 .msg-row:hover { background: rgba(255,255,255,0.03); }
+.msg-row.grouped { padding-top: 1px; padding-bottom: 1px; }
+
 .msg-row.mention {
   background: rgba(145,70,255,0.12);
   border-left: 2px solid #9146ff;
   padding-left: 4px;
 }
 .msg-row.mention:hover { background: rgba(145,70,255,0.18); }
+
+/* ── Bloco próprio ── */
+.msg-row.own {
+  background: rgba(145,70,255,0.06);
+  border-left: 2px solid rgba(145,70,255,0.4);
+  padding-left: 4px;
+  border-radius: 0;
+}
+.msg-row.own:hover { background: rgba(145,70,255,0.1); }
+.msg-row.own-only {
+  border-radius: 6px;
+  margin-top: 2px;
+  margin-bottom: 2px;
+}
+.msg-row.own-first {
+  border-radius: 6px 6px 0 0;
+  margin-top: 2px;
+}
+.msg-row.own-last {
+  border-radius: 0 0 6px 6px;
+  margin-bottom: 2px;
+}
 
 .msg-avatar {
   width: 28px;
@@ -453,6 +482,10 @@ watch(() => store.user, (u) => {
   justify-content: center;
   flex-shrink: 0;
   margin-top: 1px;
+}
+.msg-avatar-spacer {
+  width: 28px;
+  flex-shrink: 0;
 }
 
 .msg-body  { flex: 1; min-width: 0; }
@@ -520,10 +553,7 @@ watch(() => store.user, (u) => {
   transition: background 0.1s;
 }
 .mention-suggestion:hover,
-.mention-suggestion.active {
-  background: rgba(145,70,255,0.2);
-  color: #fff;
-}
+.mention-suggestion.active { background: rgba(145,70,255,0.2); color: #fff; }
 
 /* ── Input ── */
 .chat-input-bar {
@@ -621,7 +651,6 @@ watch(() => store.user, (u) => {
   min-height: 0;
 }
 
-/* Toolbar ativa */
 .win-toolbar-btn.active {
   background: rgba(145,70,255,0.2);
   color: #c084fc;
