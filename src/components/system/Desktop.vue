@@ -44,7 +44,7 @@ import WinLoja    from '@/components/windows/WinLoja.vue'
 import WinRifa    from '@/components/windows/WinRifa.vue'
 import WinLive    from '@/components/windows/WinLive.vue'
 import WinChat    from '@/components/windows/WinChat.vue'
-import WinCMD from '@/components/windows/WinCMD.vue'
+import WinCMD     from '@/components/windows/WinCMD.vue'
 
 const store = useDesktopStore()
 
