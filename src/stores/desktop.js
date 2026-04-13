@@ -16,8 +16,9 @@ const windows = ref({
   jogos:   { open: false, minimized: false, maximized: false, z: 100, x: 200, y: 100, w: 380, h: null },
   loja:    { open: false, minimized: false, maximized: false, z: 100, x: 220, y:  80, w: 380, h: null },
   rifa:    { open: false, minimized: false, maximized: false, z: 100, x: 180, y:  90, w: 380, h: null },
-  live:    { open: false, minimized: false, maximized: false, z: 100, x:  80, y:  30, w: 560, h: 340 }, // h fixo inicial
-  chat:    { open: false, minimized: false, maximized: false, z: 100, x: 660, y:  30, w: 320, h: 480 }, // [NOVO]
+  live:    { open: false, minimized: false, maximized: false, z: 100, x:  80, y:  30, w: 560, h: 340 },
+  chat:    { open: false, minimized: false, maximized: false, z: 100, x: 660, y:  30, w: 320, h: 480 },
+  cmd:     { open: false, minimized: false, maximized: false, z: 100, x: 160, y: 80, w: 580, h: 420 },
 })
 
   const activeWindowId  = ref(null)

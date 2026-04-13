@@ -9,7 +9,7 @@ export function useTwitchAuth() {
       client_id:     TWITCH_CLIENT_ID,
       redirect_uri:  TWITCH_REDIRECT_URI,
       response_type: 'token',
-      scope:         'user:read:email user:write:chat',
+      scope: 'user:read:email user:write:chat user:read:emotes',
     })
     window.location.href = `https://id.twitch.tv/oauth2/authorize?${params}`
   }

@@ -8,6 +8,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@vueuse/core": "^14.2.1",
     "pinia": "^2.1.7",
     "socket.io-client": "^4.8.3",
     "vue": "^3.4.0"

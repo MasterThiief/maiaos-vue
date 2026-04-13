@@ -28,7 +28,8 @@
     <WinLoja />
     <WinRifa />
     <WinLive />
-	<WinChat />
+	  <WinChat />
+    <WinCMD />
   </div>
 </template>
 
@@ -43,6 +44,7 @@ import WinLoja    from '@/components/windows/WinLoja.vue'
 import WinRifa    from '@/components/windows/WinRifa.vue'
 import WinLive    from '@/components/windows/WinLive.vue'
 import WinChat    from '@/components/windows/WinChat.vue'
+import WinCMD from '@/components/windows/WinCMD.vue'
 
 const store = useDesktopStore()
 
@@ -55,7 +57,8 @@ const icons = [
   { id: 'jogos',   label: 'Jogos',               emoji: '🎮', bg: 'rgba(0,180,100,0.15)'  },
   { id: 'loja',    label: 'Loja',                emoji: '🛒', bg: 'rgba(215,100,0,0.15)'  },
   { id: 'rifa',    label: 'Rifas',               emoji: '🎰', bg: 'rgba(215,0,100,0.15)'  },
-  { id: 'chat',    label: 'Chat',                 emoji: '💬', bg: 'rgba(145,70,255,0.2)' }
+  { id: 'chat',    label: 'Chat',                emoji: '💬', bg: 'rgba(145,70,255,0.2)' },
+  { id: 'cmd',     label: 'Terminal',            emoji: '⌨️', bg: 'rgba(0,200,100,0.15)' },
 ]
 
 function onRightClick(e) {
