@@ -46,8 +46,9 @@ const winMeta = {
   jogos:   ['🎮', 'Jogos'],
   loja:    ['🛒', 'Loja'],
   rifa:    ['🎰', 'Rifas'],
-  live:    ['📺', 'Live'],    // [NOVO]
-  chat:    ['💬', 'Chat'],    // [NOVO]
+  live:    ['📺', 'Live'], 
+  chat:    ['💬', 'Chat'], 
+  cmd:    ['⌨️', 'Terminal'],
 }
 
 const openWindowIds = computed(() =>
